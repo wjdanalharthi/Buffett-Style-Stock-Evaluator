@@ -1,4 +1,5 @@
-import os, re, pandas as pd
+import os, re
+import pandas as pd
 
 CACHE_DIR = os.getenv("CACHE_DIR", ".cache")
 FUND_DIR = os.path.join(CACHE_DIR, "fundamentals")
@@ -24,7 +25,7 @@ def upsert_fundamentals(df: pd.DataFrame) -> None:
     if df is None or df.empty:
         return
     required = ["ticker","year","revenue","net_income","shareholders_equity","total_debt",
-                "shares_outstanding","free_cash_flow","current_assets","total_liabilities"]
+                "shares_outstanding","free_cash_flow","current_assets","total_liabilities","company"]
     out = df.copy()
     for col in required:
         if col not in out.columns:
