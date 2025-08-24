@@ -77,7 +77,7 @@ with st.sidebar:
 st.title("📘 Buffett-Style Stock Dashboard")
 st.write("Evaluate your holdings and tickers using Buffett-style heuristics.")
 
-tab1, tab2, tab3, tab4 = st.tabs(["📂 Portfolio", "🔎 Stock Lookup", "📊 Comparisons", "📖 Methodology"])
+tab1, tab2, tab3, tab4 = st.tabs(["📂 Portfolio", "📊 Comparisons", "🔎 Stock Lookup", "📖 Methodology"])
 
 # -------------- Portfolio --------------
 def load_port():
@@ -137,18 +137,80 @@ with tab1:
     show_cols = [c for c in order if c in port.columns]
     st.dataframe(port[show_cols], use_container_width=True, hide_index=True)
 
-    # Sector distribution (by Shares for display)
-    if "Sector" in port.columns:
-        try:
-            st.plotly_chart(px.bar(port.groupby("Sector", as_index=False).agg({"Shares":"sum"}), x="Sector", y="Shares", title="Holdings by Sector"), use_container_width=True)
-        except Exception:
-            pass
+    # ---- Portfolio-wide Entry Checks (P/B, Net-Net, P/E relative) ----
+    st.markdown("### Best Entry Checks (portfolio)")
+    industry_pe_port = st.number_input("Industry P/E (used for all tickers here; refine per ticker in Stock Lookup)", min_value=0.0, value=20.0, step=0.1)
+    rows = []
+    for t in unique_tickers:
+        price = price_map.get(t)
+        if price is None and "LivePrice" in port.columns:
+            try:
+                price = float(port.loc[port["Ticker"].str.upper()==t, "LivePrice"].iloc[0])
+            except Exception:
+                price = None
+        fdf = fundamentals_cached_first(t, upl_df)
+        if fdf is None or fdf.empty:
+            continue
+        fdf5 = fdf.sort_values("year").tail(5)
+        last = fdf5.iloc[-1]
+        so = last.get("shares_outstanding")
+        eq = last.get("shareholders_equity")
+        ca = last.get("current_assets")
+        tl = last.get("total_liabilities")
+        ni = last.get("net_income")
+        eps = (ni / so) if (pd.notna(so) and so) else None
+        bvps = (eq / so) if (pd.notna(eq) and pd.notna(so) and so) else None
+        ncavps = ((ca - tl) / so) if (pd.notna(ca) and pd.notna(tl) and pd.notna(so) and so) else None
+        pb_th = 0.8 * bvps if bvps is not None else None
+        nn_th = (2/3) * ncavps if ncavps is not None else None
+        pe_company = (price / eps) if (price and eps and eps>0) else None
+        pe_th = 0.70 * industry_pe_port if industry_pe_port and industry_pe_port>0 else None
+        pb_pass = (price is not None and pb_th is not None and price <= pb_th)
+        nn_pass = (price is not None and nn_th is not None and price <= nn_th)
+        pe_pass = (pe_company is not None and pe_th is not None and pe_company <= pe_th)
+        rows.append({
+            "Ticker": t,
+            "Price": price,
+            "BVPS": bvps,
+            "PB Threshold": pb_th,
+            "P/B Pass": "✅" if pb_pass else ("❌" if (price is not None and pb_th is not None) else "—"),
+            "NCAV/share": ncavps,
+            "Net-Net Threshold": nn_th,
+            "Net-Net Pass": "✅" if nn_pass else ("❌" if (price is not None and nn_th is not None) else "—"),
+            "EPS": eps,
+            "Industry P/E": industry_pe_port,
+            "Company P/E": pe_company,
+            "P/E Threshold": pe_th,
+            "P/E Pass": "✅" if pe_pass else ("❌" if (pe_company is not None and pe_th is not None) else "—"),
+            "Any PASS": "✅" if (pb_pass or nn_pass or pe_pass) else "❌"
+        })
+    if rows:
+        df_checks = pd.DataFrame(rows)
+        st.dataframe(df_checks, use_container_width=True, hide_index=True)
+    else:
+        st.info("No fundamentals found for any ticker. Upload a fundamentals CSV or set the API key and try again.")
 
-    # Scorecards per holding (5y) based on fundamentals (cache-first)
-    st.markdown("---")
-    st.subheader("Buffett Scorecards (last 5y)")
+        # Sector distribution (by Shares for display)
+        if "Sector" in port.columns:
+            try:
+                st.plotly_chart(px.bar(port.groupby("Sector", as_index=False).agg({"Shares":"sum"}), x="Sector", y="Shares", title="Holdings by Sector"), use_container_width=True)
+            except Exception:
+                pass
+
+        # Scorecards per holding (5y) based on fundamentals (cache-first)
+        st.markdown("---")
+
+# -------------- Comparisons --------------
+with tab2:
+    st.subheader("Comparisons (5y)")
+    
+    # ---- Buffett Scorecards moved from Portfolio ----
+    st.markdown("### Buffett Scorecards (last 5y)")
     st.caption("Using your 5 rules over a 5-year window.")
-    for tkr in unique_tickers:
+    # Build list of tickers from the portfolio on this tab
+    port_cmp = pd.read_excel(uploaded_portfolio) if uploaded_portfolio is not None else pd.read_excel("data/sample_portfolio.xlsx")
+    tickers_cmp = [t.upper() for t in port_cmp["Ticker"].unique()]
+    for tkr in tickers_cmp:
         st.markdown(f"**{tkr}**")
         fdf = fundamentals_cached_first(tkr, upl_df)
         if fdf is None or fdf.empty:
@@ -157,7 +219,7 @@ with tab1:
         fdf5 = fdf.sort_values("year").tail(5)
         results = scorecard(fdf5)
         colA, colB, colC, colD, colE = st.columns(5)
-        cols = [colA,colB,colC,colD,colE]
+        cols = [colA, colB, colC, colD, colE]
         for c, r in zip(cols, results):
             with c:
                 if r.pass_flag is True:
@@ -167,9 +229,63 @@ with tab1:
                 else:
                     st.info(f"ℹ️ {r.name}")
                 st.caption(r.details or " ")
+    st.markdown("---")
+    st.caption("Charts use whatever fundamentals are available (uploaded CSV or Parquet cache).")
+    port = pd.read_excel(uploaded_portfolio) if uploaded_portfolio is not None else pd.read_excel("data/sample_portfolio.xlsx")
+    tickers = [t.upper() for t in port["Ticker"].unique()]
 
-# -------------- Stock Lookup --------------
-with tab2:
+    # Load dfs
+    dfs = {}
+    for t in tickers:
+        d = fundamentals_cached_first(t, upl_df)
+        if d is not None and not d.empty:
+            dfs[t] = d.sort_values("year").tail(5)
+
+    if not dfs:
+        st.info("No fundamentals available. Upload CSV or analyze tickers in Stock Lookup to populate the Parquet cache.")
+    else:
+        # ROE chart
+        dd = []
+        for t, d in dfs.items():
+            for y, v in zip(d["year"], (d["net_income"] / d["shareholders_equity"].replace(0, pd.NA))*100):
+                dd.append({"Ticker": t, "year": y, "ROE_%": float(v) if pd.notna(v) else None})
+        fig = px.line(pd.DataFrame(dd), x="year", y="ROE_%", color="Ticker", title="Is Return on Equity consistently over 15%?")
+        fig.add_hline(y=15, line_dash="dot")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # D/E chart
+        dd = []
+        for t, d in dfs.items():
+            for y, v in zip(d["year"], (d["total_debt"]/d["shareholders_equity"].replace(0, pd.NA))*100):
+                dd.append({"Ticker": t, "year": y, "DE_%": float(v) if pd.notna(v) else None})
+        fig = px.line(pd.DataFrame(dd), x="year", y="DE_%", color="Ticker", title="Is Debt to Equity below 50%?")
+        fig.add_hline(y=50, line_dash="dot")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Equity growth
+        dd = []
+        for t, d in dfs.items():
+            for y, v in zip(d["year"], d["shareholders_equity"]):
+                dd.append({"Ticker": t, "year": y, "Equity": v})
+        st.plotly_chart(px.line(pd.DataFrame(dd), x="year", y="Equity", color="Ticker", title="Is Equity growing overtime?"), use_container_width=True)
+
+        # Profit growth
+        dd = []
+        for t, d in dfs.items():
+            for y, v in zip(d["year"], d["net_income"]):
+                dd.append({"Ticker": t, "year": y, "Profit": v})
+        st.plotly_chart(px.line(pd.DataFrame(dd), x="year", y="Profit", color="Ticker", title="Is Profit growing overtime?"), use_container_width=True)
+
+        # FCF
+        dd = []
+        for t, d in dfs.items():
+            for y, v in zip(d["year"], d["free_cash_flow"]):
+                dd.append({"Ticker": t, "year": y, "FCF": v})
+        fig = px.line(pd.DataFrame(dd), x="year", y="FCF", color="Ticker", title="Is Free Cash Flow positive?")
+        fig.add_hline(y=0, line_dash="dot")
+        st.plotly_chart(fig, use_container_width=True)
+
+with tab3:
     st.subheader("Lookup a Ticker")
     if "lookup_run" not in st.session_state: st.session_state["lookup_run"] = False
     if "lookup_target" not in st.session_state: st.session_state["lookup_target"] = "AAPL"
@@ -276,64 +392,6 @@ with tab2:
             
         st.markdown("### Raw 5-year fundamentals")
         st.dataframe(fdf5, use_container_width=True, hide_index=True)
-
-# -------------- Comparisons --------------
-with tab3:
-    st.subheader("Comparisons (5y)")
-    st.caption("Charts use whatever fundamentals are available (uploaded CSV or Parquet cache).")
-    port = pd.read_excel(uploaded_portfolio) if uploaded_portfolio is not None else pd.read_excel("data/sample_portfolio.xlsx")
-    tickers = [t.upper() for t in port["Ticker"].unique()]
-
-    # Load dfs
-    dfs = {}
-    for t in tickers:
-        d = fundamentals_cached_first(t, upl_df)
-        if d is not None and not d.empty:
-            dfs[t] = d.sort_values("year").tail(5)
-
-    if not dfs:
-        st.info("No fundamentals available. Upload CSV or analyze tickers in Stock Lookup to populate the Parquet cache.")
-    else:
-        # ROE chart
-        dd = []
-        for t, d in dfs.items():
-            for y, v in zip(d["year"], (d["net_income"] / d["shareholders_equity"].replace(0, pd.NA))*100):
-                dd.append({"Ticker": t, "year": y, "ROE_%": float(v) if pd.notna(v) else None})
-        fig = px.line(pd.DataFrame(dd), x="year", y="ROE_%", color="Ticker", title="Is Return on Equity consistently over 15%?")
-        fig.add_hline(y=15, line_dash="dot")
-        st.plotly_chart(fig, use_container_width=True)
-
-        # D/E chart
-        dd = []
-        for t, d in dfs.items():
-            for y, v in zip(d["year"], (d["total_debt"]/d["shareholders_equity"].replace(0, pd.NA))*100):
-                dd.append({"Ticker": t, "year": y, "DE_%": float(v) if pd.notna(v) else None})
-        fig = px.line(pd.DataFrame(dd), x="year", y="DE_%", color="Ticker", title="Is Debt to Equity below 50%?")
-        fig.add_hline(y=50, line_dash="dot")
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Equity growth
-        dd = []
-        for t, d in dfs.items():
-            for y, v in zip(d["year"], d["shareholders_equity"]):
-                dd.append({"Ticker": t, "year": y, "Equity": v})
-        st.plotly_chart(px.line(pd.DataFrame(dd), x="year", y="Equity", color="Ticker", title="Is Equity growing overtime?"), use_container_width=True)
-
-        # Profit growth
-        dd = []
-        for t, d in dfs.items():
-            for y, v in zip(d["year"], d["net_income"]):
-                dd.append({"Ticker": t, "year": y, "Profit": v})
-        st.plotly_chart(px.line(pd.DataFrame(dd), x="year", y="Profit", color="Ticker", title="Is Profit growing overtime?"), use_container_width=True)
-
-        # FCF
-        dd = []
-        for t, d in dfs.items():
-            for y, v in zip(d["year"], d["free_cash_flow"]):
-                dd.append({"Ticker": t, "year": y, "FCF": v})
-        fig = px.line(pd.DataFrame(dd), x="year", y="FCF", color="Ticker", title="Is Free Cash Flow positive?")
-        fig.add_hline(y=0, line_dash="dot")
-        st.plotly_chart(fig, use_container_width=True)
 
 # -------------- Methodology --------------
 with tab4:
