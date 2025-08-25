@@ -1,7 +1,8 @@
 # Buffett-Style Stock Dashboard
 
-Evaluate stocks using a simplified Warren Buffett methodology over a 5‑year window.  
-This app is built with **Streamlit**, uses **on-demand live prices**, and persists fundamentals in **Parquet files** (no SQL, no Streamlit caches).
+An implementation of the book "Warren Buffett and the Interpretation of Financial Statements: The Search for the Company with a Durable Competitive Advantage". 
+This app evaluate stocks using a simplified Warren Buffett methodology over a 5‑year window.  
+It is built with **Streamlit**, uses **on-demand live prices**, and persists fundamentals in **Parquet files** (no SQL, no Streamlit caches).
 
 ## ✨ Features
 - **Portfolio view** with manual or on-demand live prices (via Financial Modeling Prep).
